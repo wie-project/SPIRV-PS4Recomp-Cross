@@ -6397,6 +6397,27 @@ void CompilerMSL::emit_custom_functions()
 			break;
 		}
 
+		case SPVFuncImplImage3DAtomicCoords:
+		{
+			if (msl_options.supports_msl_version(3, 1))
+			{
+				statement("// The required alignment of a linear texture of R32Uint format.");
+				statement("constant uint spvLinearTextureAlignment = 4;");
+			}
+			else
+			{
+				statement("// The required alignment of a linear texture of R32Uint format.");
+				statement("constant uint spvLinearTextureAlignment = ", msl_options.r32ui_linear_texture_alignment,
+				          ";");
+			}
+			statement("// Returns buffer coords corresponding to 3D texture coords for emulating 3D texture atomics");
+			statement("#define spvImage3DAtomicCoord(tc, tex) ((((((tc).z * (tex).get_height()) + (tc).y) * (((tex).get_width() + ",
+			          " spvLinearTextureAlignment / 4 - 1) & ~(",
+			          " spvLinearTextureAlignment / 4 - 1))) + (tc).x))");
+			statement("");
+			break;
+		}
+
 		// Fix up gradient vectors when sampling a cube texture for Apple Silicon.
 		// h/t Alexey Knyazev (https://github.com/KhronosGroup/MoltenVK/issues/2068#issuecomment-1817799067) for the code.
 		case SPVFuncImplGradientCube:
@@ -10182,6 +10203,10 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
 			if (type.image.dim == Dim2D)
 			{
 				coord = join("spvImage2DAtomicCoord(", coord, ", ", to_expression(ops[2]), ")");
+			}
+			else if (type.image.dim == Dim3D)
+			{
+				coord = join("spvImage3DAtomicCoord(", coord, ", ", to_expression(ops[2]), ")");
 			}
 
 			auto &e = set<SPIRExpression>(id, join(to_expression(ops[2]), "_atomic[", coord, "]"), result_type, true);
@@ -19725,8 +19750,14 @@ CompilerMSL::SPVFuncImpl CompilerMSL::OpCodePreprocessor::get_spv_func_impl(Op o
 		if (it != image_pointers_emulated.end())
 		{
 			uint32_t tid = get<SPIRVariable>(it->second).basetype;
-			if (tid && get<SPIRType>(tid).image.dim == Dim2D)
-				return SPVFuncImplImage2DAtomicCoords;
+			if (tid)
+			{
+				auto dim = get<SPIRType>(tid).image.dim;
+				if (dim == Dim2D)
+					return SPVFuncImplImage2DAtomicCoords;
+				else if (dim == Dim3D)
+					return SPVFuncImplImage3DAtomicCoords;
+			}
 		}
 		break;
 	}
